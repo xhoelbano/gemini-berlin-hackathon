@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, X, Volume2, Sparkles, Hammer, Check } from 'lucide-react';
+import { Mic, MicOff, X, Volume2, Sparkles, Hammer, Check, MessageSquare } from 'lucide-react';
 import { connectLiveSession, createBlob, decode, decodeAudioData } from '../services/gemini';
 import { LiveServerMessage } from '@google/genai';
 
@@ -13,12 +13,52 @@ const BeaverAgent: React.FC<BeaverAgentProps> = ({ onClose, onIdeaReady, project
   const [isConnected, setIsConnected] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
   const [status, setStatus] = useState("Waking up Benny...");
+  const [conversationSummary, setConversationSummary] = useState<string[]>([]);
+  const [generatedPrompt, setGeneratedPrompt] = useState('');
   
   // Audio Refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const sessionPromise = useRef<Promise<any> | null>(null);
   const cleanUpRef = useRef<(() => void) | null>(null);
+  const conversationRef = useRef<{role: string, text: string}[]>([]);
+
+  // Generate design prompt from conversation
+  const updateDesignPrompt = () => {
+    const convo = conversationRef.current;
+    if (convo.length < 2) return;
+    
+    // Extract key design elements from conversation
+    const userMessages = convo.filter(c => c.role === 'user').map(c => c.text).join(' ');
+    const bennyMessages = convo.filter(c => c.role === 'benny').map(c => c.text).join(' ');
+    
+    // Build a design prompt from the conversation
+    const keywords: string[] = [];
+    
+    // Look for themes
+    if (/modern|contemporary|sleek|minimal/i.test(userMessages)) keywords.push('modern minimalist design');
+    if (/eco|green|sustainable|nature|tree/i.test(userMessages)) keywords.push('eco-friendly with vertical gardens');
+    if (/colorful|bright|fun|playful/i.test(userMessages)) keywords.push('colorful and playful elements');
+    if (/futuristic|tech|robot|cyber/i.test(userMessages)) keywords.push('futuristic high-tech aesthetic');
+    if (/wood|wooden|timber|natural/i.test(userMessages)) keywords.push('warm timber facade');
+    if (/glass|transparent|light/i.test(userMessages)) keywords.push('glass walls with natural lighting');
+    
+    // Look for features
+    if (/slide|playground|climb/i.test(userMessages)) keywords.push('integrated playground with slides');
+    if (/garden|plants|flowers/i.test(userMessages)) keywords.push('rooftop garden with plants');
+    if (/solar|energy|panel/i.test(userMessages)) keywords.push('solar panels on the roof');
+    if (/water|fountain|pool/i.test(userMessages)) keywords.push('water features and fountains');
+    if (/art|mural|paint/i.test(userMessages)) keywords.push('artistic murals and installations');
+    if (/sport|basketball|football/i.test(userMessages)) keywords.push('sports facilities');
+    
+    // Default if nothing specific found
+    if (keywords.length === 0) {
+      keywords.push('innovative architectural design for ' + projectTitle);
+    }
+    
+    const prompt = keywords.join(', ') + ` for ${projectTitle}`;
+    setGeneratedPrompt(prompt);
+  };
 
   useEffect(() => {
     let active = true;
@@ -82,6 +122,16 @@ const BeaverAgent: React.FC<BeaverAgentProps> = ({ onClose, onIdeaReady, project
             onMessage: async (msg: LiveServerMessage) => {
                 if (!active) return;
                 
+                // Capture text from model for conversation summary
+                const textPart = msg.serverContent?.modelTurn?.parts?.find(p => p.text);
+                if (textPart?.text) {
+                    conversationRef.current.push({ role: 'benny', text: textPart.text });
+                    setConversationSummary(prev => [...prev, `🦫 ${textPart.text}`]);
+                    
+                    // Generate a design prompt from conversation
+                    updateDesignPrompt();
+                }
+                
                 // Handle Audio Output
                 const data = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                 if (data && audioContextRef.current) {
@@ -116,6 +166,14 @@ const BeaverAgent: React.FC<BeaverAgentProps> = ({ onClose, onIdeaReady, project
                     } catch (decodeErr) {
                         console.error("Audio Decode Error", decodeErr);
                     }
+                }
+                
+                // Capture user speech transcription if available
+                const userTranscript = msg.serverContent?.inputTranscript;
+                if (userTranscript) {
+                    conversationRef.current.push({ role: 'user', text: userTranscript });
+                    setConversationSummary(prev => [...prev, `👤 ${userTranscript}`]);
+                    updateDesignPrompt();
                 }
             },
             onError: (err) => {
@@ -187,8 +245,32 @@ const BeaverAgent: React.FC<BeaverAgentProps> = ({ onClose, onIdeaReady, project
             </div>
         </div>
 
+        {/* Conversation Log */}
+        {conversationSummary.length > 0 && (
+          <div className="mt-4 bg-slate-50 rounded-xl p-3 border border-slate-200 max-h-32 overflow-y-auto">
+            <div className="flex items-center text-xs font-bold text-slate-500 mb-2">
+              <MessageSquare className="w-3 h-3 mr-1" /> Conversation
+            </div>
+            <div className="space-y-1">
+              {conversationSummary.slice(-4).map((msg, i) => (
+                <p key={i} className="text-xs text-slate-600 truncate">{msg}</p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Generated Prompt Preview */}
+        {generatedPrompt && (
+          <div className="mt-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-3 border border-amber-200">
+            <div className="text-xs font-bold text-amber-600 mb-1 flex items-center">
+              <Sparkles className="w-3 h-3 mr-1" /> Your Design Prompt
+            </div>
+            <p className="text-sm text-slate-700 font-medium">{generatedPrompt}</p>
+          </div>
+        )}
+
         {/* Visualizer / Actions */}
-        <div className="mt-6 bg-slate-100 rounded-xl p-4 flex items-center justify-between border border-slate-200">
+        <div className="mt-4 bg-slate-100 rounded-xl p-4 flex items-center justify-between border border-slate-200">
              <div className="flex space-x-1 h-8 items-center">
                  {/* Fake Visualizer bars */}
                  {[1,2,3,4,5].map(i => (
@@ -197,16 +279,17 @@ const BeaverAgent: React.FC<BeaverAgentProps> = ({ onClose, onIdeaReady, project
              </div>
 
              <button 
-                onClick={() => onIdeaReady("Generated based on conversation with Benny")}
-                className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-full font-bold text-sm shadow-lg shadow-green-500/20 flex items-center transition-all"
+                onClick={() => onIdeaReady(generatedPrompt || `Creative architectural design for ${projectTitle}`)}
+                disabled={!isConnected}
+                className={`bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-full font-bold text-sm shadow-lg shadow-green-500/20 flex items-center transition-all ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
              >
                  <Hammer className="w-4 h-4 mr-2" />
-                 Build It!
+                 {generatedPrompt ? 'Build This Design!' : 'Build It!'}
              </button>
         </div>
         
         <div className="mt-2 text-center text-[10px] text-slate-400 font-medium">
-            Benny uses Gemini 2.5 Live API to guide you.
+            Benny uses Gemini 2.5 Live API to guide you. Speak your ideas!
         </div>
 
       </div>

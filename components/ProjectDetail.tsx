@@ -3,8 +3,9 @@ import { Project, Idea } from '../types';
 import { generateArchitecturalImage, generateArchitecturalVideo } from '../services/gemini';
 import { getIdeas, saveIdea, voteIdea, getVoteCount } from '../services/storage';
 import { DESIGN_PRESETS } from '../constants';
-import { MessageSquare, ThumbsUp, Video, Image as ImageIcon, Loader2, Sparkles, Send, Mic, Edit, Wand2, Plus, Check, Play, Map as MapIcon, Globe, Layers, AlertCircle, Eye, PenTool, Palette } from 'lucide-react';
+import { MessageSquare, ThumbsUp, Video, Image as ImageIcon, Loader2, Sparkles, Send, Mic, Edit, Wand2, Plus, Check, Play, Map as MapIcon, Globe, Layers, AlertCircle, Eye, PenTool, Palette, Maximize2, FileImage } from 'lucide-react';
 import BeaverAgent from './BeaverAgent';
+import ImageLightbox from './ImageLightbox';
 
 interface ProjectDetailProps {
   project: Project;
@@ -16,9 +17,11 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<'ideate' | 'site' | 'gallery'>('ideate');
+  const [activeTab, setActiveTab] = useState<'ideate' | 'site' | 'gallery' | 'drawings'>('ideate');
   const [isBeaverActive, setIsBeaverActive] = useState(false);
   const [mapError, setMapError] = useState('');
+  const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
+  const [ideaReactions, setIdeaReactions] = useState<{[key: string]: string[]}>({});
   
   // Design Input State
   const [customPrompt, setCustomPrompt] = useState('');
@@ -161,6 +164,15 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
           const videoPrompt = "Cinematic 3D drone tour fly-through of this architectural design, smooth motion, high definition, real world physics.";
           const videoUrl = await generateArchitecturalVideo(videoPrompt, idea.imageUrl.split(',')[1]);
           addPoints(100);
+          
+          // Update the existing idea with video URL
+          const updatedIdea = { ...idea, videoUrl };
+          setIdeas(prev => prev.map(i => i.id === idea.id ? updatedIdea : i));
+          if (selectedIdea?.id === idea.id) {
+            setSelectedIdea(updatedIdea);
+          }
+          
+          // Also create a separate video entry
           const newVideoIdea: Idea = {
               id: Date.now().toString(),
               projectId: project.id,
@@ -173,13 +185,20 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
               type: 'video'
           };
           saveIdea(newVideoIdea);
-          setIdeas([newVideoIdea, ...ideas]);
+          setIdeas(prev => [newVideoIdea, ...prev]);
       } catch (error) {
           console.error("Video Gen Failed", error);
           alert("Failed to generate video tour.");
       } finally {
           setIsGenerating(false);
       }
+  };
+
+  const handleReaction = (ideaId: string, emoji: string) => {
+    setIdeaReactions(prev => ({
+      ...prev,
+      [ideaId]: [...(prev[ideaId] || []), emoji]
+    }));
   };
 
   return (
@@ -221,6 +240,13 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
             >
                 <Layers className="w-4 h-4 mr-2" />
                 Gallery
+            </button>
+            <button 
+                onClick={() => setActiveTab('drawings')}
+                className={`pb-2 px-4 flex items-center ${activeTab === 'drawings' ? 'border-b-2 border-sky-500 text-sky-400' : 'text-slate-400 hover:text-white'}`}
+            >
+                <FileImage className="w-4 h-4 mr-2" />
+                Architect Plans
             </button>
         </div>
 
@@ -357,24 +383,51 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
         {activeTab === 'gallery' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {ideas.map((idea) => (
-                    <div key={idea.id} className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-md">
-                        <div className="relative aspect-video bg-black group">
+                    <div key={idea.id} className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-md hover:border-sky-500/50 transition-colors group">
+                        <div 
+                          className="relative aspect-video bg-black cursor-pointer"
+                          onClick={() => setSelectedIdea(idea)}
+                        >
                             {idea.type === 'image' ? (
                                 <img src={idea.imageUrl} alt={idea.prompt} className="w-full h-full object-cover" />
                             ) : (
-                                <video src={idea.videoUrl} controls autoPlay loop muted className="w-full h-full object-cover" />
+                                <video src={idea.videoUrl} className="w-full h-full object-cover" muted />
                             )}
-                             {idea.type === 'image' && (
-                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
+                            
+                            {/* Hover Overlay */}
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-[2px]">
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setSelectedIdea(idea); }}
+                                    className="bg-white/20 hover:bg-white/30 text-white p-3 rounded-full transition-all"
+                                >
+                                    <Maximize2 className="w-5 h-5" />
+                                </button>
+                                {idea.type === 'image' && !idea.videoUrl && (
                                     <button 
-                                        onClick={() => handleGenerateTour(idea)}
+                                        onClick={(e) => { e.stopPropagation(); handleGenerateTour(idea); }}
                                         disabled={isGenerating}
-                                        className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2.5 rounded-full font-bold flex items-center shadow-lg transform hover:scale-105 transition-all text-sm"
+                                        className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-full font-bold flex items-center shadow-lg text-sm"
                                     >
-                                        <Video className="w-4 h-4 mr-2" />
+                                        <Video className="w-4 h-4 mr-1" />
                                         3D Tour
                                     </button>
-                                </div>
+                                )}
+                            </div>
+
+                            {/* Video Badge */}
+                            {idea.videoUrl && (
+                              <div className="absolute top-2 right-2 bg-purple-600 text-white text-xs px-2 py-1 rounded-full flex items-center">
+                                <Video className="w-3 h-3 mr-1" /> Video
+                              </div>
+                            )}
+
+                            {/* Reactions Display */}
+                            {ideaReactions[idea.id]?.length > 0 && (
+                              <div className="absolute bottom-2 left-2 flex gap-1">
+                                {[...new Set(ideaReactions[idea.id])].slice(0, 3).map((emoji, i) => (
+                                  <span key={i} className="text-lg bg-black/50 rounded-full px-1">{emoji}</span>
+                                ))}
+                              </div>
                             )}
                         </div>
                         <div className="p-4">
@@ -390,7 +443,103 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
                 ))}
             </div>
         )}
+
+        {activeTab === 'drawings' && (
+            <div className="space-y-6">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30 rounded-xl p-6">
+                    <h3 className="text-xl font-bold text-amber-400 mb-2 flex items-center">
+                        <FileImage className="w-6 h-6 mr-2" />
+                        Official Architectural Plans
+                    </h3>
+                    <p className="text-slate-400 text-sm">
+                        These are real architectural drawings from professional architects working on this project. 
+                        Use them as reference for your designs.
+                    </p>
+                </div>
+
+                {/* Drawings Grid */}
+                {project.architecturalDrawings && project.architecturalDrawings.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {project.architecturalDrawings.map((drawing) => (
+                            <div key={drawing.id} className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500/50 transition-all group">
+                                <div className="relative aspect-[4/3] bg-slate-900">
+                                    <img 
+                                        src={drawing.imageUrl} 
+                                        alt={drawing.title}
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                    />
+                                    {/* Type Badge */}
+                                    <div className="absolute top-3 left-3">
+                                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                                            drawing.type === 'floor_plan' ? 'bg-blue-500/90 text-white' :
+                                            drawing.type === 'elevation' ? 'bg-green-500/90 text-white' :
+                                            drawing.type === 'section' ? 'bg-purple-500/90 text-white' :
+                                            drawing.type === 'perspective' ? 'bg-pink-500/90 text-white' :
+                                            'bg-amber-500/90 text-white'
+                                        }`}>
+                                            {drawing.type.replace('_', ' ')}
+                                        </span>
+                                    </div>
+                                    
+                                    {/* Hover Overlay */}
+                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                        <button className="bg-white/20 hover:bg-white/30 text-white p-4 rounded-full transition-all">
+                                            <Maximize2 className="w-6 h-6" />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="p-4">
+                                    <h4 className="font-bold text-white mb-1">{drawing.title}</h4>
+                                    <p className="text-sm text-slate-400 flex items-center">
+                                        <span className="w-2 h-2 bg-amber-400 rounded-full mr-2"></span>
+                                        {drawing.architect}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="bg-slate-800 rounded-xl p-12 text-center border border-slate-700">
+                        <FileImage className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+                        <h4 className="text-lg font-bold text-slate-400 mb-2">No Drawings Available</h4>
+                        <p className="text-slate-500 text-sm">Architectural plans for this project are coming soon.</p>
+                    </div>
+                )}
+
+                {/* Site Plan Section */}
+                <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700">
+                    <div className="p-4 border-b border-slate-700">
+                        <h4 className="font-bold text-white flex items-center">
+                            <MapIcon className="w-4 h-4 mr-2 text-sky-400" />
+                            Official Site Plan
+                        </h4>
+                    </div>
+                    <div className="aspect-video relative">
+                        <img 
+                            src={project.sitePlanUrl} 
+                            alt="Site Plan"
+                            className="w-full h-full object-cover"
+                        />
+                    </div>
+                </div>
+            </div>
+        )}
       </div>
+
+      {/* Loading Overlay */}
+      {isGenerating && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[500] flex items-center justify-center">
+          <div className="bg-slate-900 border border-sky-500/50 rounded-2xl p-8 max-w-md text-center shadow-2xl shadow-sky-500/20">
+            <div className="relative mb-6">
+              <div className="w-20 h-20 border-4 border-sky-500/30 border-t-sky-500 rounded-full animate-spin mx-auto"></div>
+              <Sparkles className="w-8 h-8 text-sky-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">Creating Magic ✨</h3>
+            <p className="text-slate-400">{loadingMessage || "Generating your architectural vision..."}</p>
+          </div>
+        </div>
+      )}
 
       {/* Benny Modal */}
       {isBeaverActive && (
@@ -399,6 +548,17 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
             onClose={() => setIsBeaverActive(false)} 
             onIdeaReady={handleBeaverIdea} 
           />
+      )}
+
+      {/* Image Lightbox */}
+      {selectedIdea && (
+        <ImageLightbox
+          idea={selectedIdea}
+          onClose={() => setSelectedIdea(null)}
+          onGenerateVideo={handleGenerateTour}
+          onReact={handleReaction}
+          isGenerating={isGenerating}
+        />
       )}
     </div>
   );
