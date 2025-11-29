@@ -1,3 +1,11 @@
+export interface ArchitecturalDrawing {
+  id: string;
+  title: string;
+  architect: string;
+  imageUrl: string;
+  type: 'floor_plan' | 'elevation' | 'section' | 'perspective' | 'sketch';
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -7,9 +15,11 @@ export interface Project {
   coordinates: { lat: number; lng: number }; 
   boundary: [number, number][]; // New: Polygon coordinates for the construction site
   imageUrl: string;
+  streetViewUrl?: string; // Google Street View static image
   sitePlanUrl: string; // New: Government construction plan
   progress: number;    // New: Project progress percentage
   type: 'School' | 'Park' | 'Public Building' | 'Infrastructure';
+  architecturalDrawings?: ArchitecturalDrawing[];
 }
 
 export interface Idea {
