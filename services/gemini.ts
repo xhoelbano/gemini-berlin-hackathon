@@ -1,5 +1,17 @@
 import { GoogleGenAI, Modality, LiveServerMessage, Type } from "@google/genai";
 
+// Safe API Key access helper
+export const getApiKey = () => {
+    try {
+        if (typeof process !== 'undefined' && process?.env?.API_KEY) {
+            return process.env.API_KEY;
+        }
+    } catch (e) {
+        console.warn("Error accessing process.env", e);
+    }
+    return ''; // Should be handled by environment injection usually
+};
+
 const getAIClient = async (requiresPaidKey: boolean = false) => {
   if (requiresPaidKey) {
     const win = window as any;
@@ -13,7 +25,7 @@ const getAIClient = async (requiresPaidKey: boolean = false) => {
   }
   // If we are in a paid context, process.env.API_KEY will be the user selected key.
   // Otherwise it's the injected environmental key.
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  return new GoogleGenAI({ apiKey: getApiKey() });
 };
 
 export const generateArchitecturalImage = async (prompt: string, base64Image?: string) => {
@@ -108,7 +120,7 @@ export const generateArchitecturalVideo = async (prompt: string, base64Image?: s
       }
 
       // Fetch the video blob
-      const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+      const videoResponse = await fetch(`${downloadLink}&key=${getApiKey()}`);
       if (!videoResponse.ok) {
            throw new Error(`Failed to download video: ${videoResponse.statusText}`);
       }
@@ -159,6 +171,7 @@ export interface LiveSessionConfig {
   onMessage: (message: LiveServerMessage) => void;
   onError: (error: ErrorEvent) => void;
   onClose: (event: CloseEvent) => void;
+  systemInstruction?: string;
 }
 
 export const connectLiveSession = async (config: LiveSessionConfig) => {
@@ -180,7 +193,7 @@ export const connectLiveSession = async (config: LiveSessionConfig) => {
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
         },
-        systemInstruction: "You are an expert architectural consultant helping a student design public spaces. Be encouraging, creative, and ask guiding questions about their vision. Keep responses concise.",
+        systemInstruction: config.systemInstruction || "You are an expert architectural consultant helping a student design public spaces. Be encouraging, creative, and ask guiding questions about their vision. Keep responses concise.",
       },
     });
 };

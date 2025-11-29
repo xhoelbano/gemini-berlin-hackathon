@@ -2,102 +2,122 @@ import { Project, UserStats, Idea } from './types';
 
 // Using specific Unsplash IDs for consistent "Berlin-like" architecture
 const IMAGES = {
-    school1: "https://images.unsplash.com/photo-1562774053-701939374585?q=80&w=1600&auto=format&fit=crop", // Modern brick
-    school2: "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?q=80&w=1600&auto=format&fit=crop", // Open campus
-    school3: "https://images.unsplash.com/photo-1509062522246-3755977927d7?q=80&w=1600&auto=format&fit=crop", // Kids playing
-    school4: "https://images.unsplash.com/photo-1596496050844-461ac76b2979?q=80&w=1600&auto=format&fit=crop", // Library
-    school5: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1600&auto=format&fit=crop", // Modern classroom
-    school6: "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=1600&auto=format&fit=crop", // Corporate/Modern
-    plan: "https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=1600&auto=format&fit=crop", // Blueprints
+    school1: "https://images.unsplash.com/photo-1562774053-701939374585?q=80&w=1600&auto=format&fit=crop", 
+    school2: "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?q=80&w=1600&auto=format&fit=crop", 
+    school3: "https://images.unsplash.com/photo-1509062522246-3755977927d7?q=80&w=1600&auto=format&fit=crop", 
+    school4: "https://images.unsplash.com/photo-1596496050844-461ac76b2979?q=80&w=1600&auto=format&fit=crop", 
+    school5: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1600&auto=format&fit=crop", 
+    school6: "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=1600&auto=format&fit=crop",
+    // Architectural Sketches / Plans
+    sketch1: "https://images.unsplash.com/photo-1581094288338-2314dddb7ece?q=80&w=1600&auto=format&fit=crop", // Hand drawn plan
+    sketch2: "https://images.unsplash.com/photo-1630699104033-b26a62c45308?q=80&w=1600&auto=format&fit=crop", // Sketch
 };
 
-// Helper to create a small polygon around a center point
-const createPolygon = (lat: number, lng: number): [number, number][] => {
-    const d = 0.002; // Roughly 200m
-    return [
-        [lat + d, lng - d],
-        [lat + d, lng + d],
-        [lat - d, lng + d],
-        [lat - d, lng - d]
-    ];
-};
+// Helper for Google Maps Polygon path (Lat/Lng objects)
+// Reduced scale factor significantly for realistic building footprints
+const createBox = (lat: number, lng: number, size: number) => [
+    { lat: lat + (size * 0.5), lng: lng - (size * 0.8) },
+    { lat: lat + (size * 0.5), lng: lng + (size * 0.8) },
+    { lat: lat - (size * 0.5), lng: lng + (size * 0.8) },
+    { lat: lat - (size * 0.5), lng: lng - (size * 0.8) }
+];
+
+export const DESIGN_PRESETS = [
+  { id: 'eco', label: '🌿 Eco-Sustainable', prompt: 'biophilic design, vertical gardens, sustainable timber, solar glass' },
+  { id: 'playful', label: '🎈 Playful', prompt: 'colorful, rounded shapes, rubberized safety ground, interactive elements' },
+  { id: 'mario', label: '🍄 Super Mario', prompt: 'nintendo style, warp pipes, question blocks, bright primary colors, fun architecture' },
+  { id: 'anime', label: '⛩️ Anime Style', prompt: 'studio ghibli art style, lush detailed backgrounds, soft lighting, hand-painted aesthetic' },
+  { id: 'dbz', label: '🔥 Dragon Ball', prompt: 'capsule corp architecture, futuristic domes, sleek rounded buildings, high tech' },
+  { id: 'cyber', label: '🤖 Cyberpunk', prompt: 'neon lights, metallic surfaces, night time, futuristic berlin, high contrast' },
+  { id: 'lego', label: '🧱 Lego', prompt: 'built entirely from lego bricks, vibrant, blocky texture, plastic rendering' },
+  { id: 'bauhaus', label: '📐 Bauhaus', prompt: 'minimalist, functional, geometric shapes, concrete and glass, berlin classic' }
+];
 
 export const INITIAL_PROJECTS: Project[] = [
   {
     id: '1',
     title: 'Nelson Mandela School Extension',
-    description: 'GOVERNMENT AIM: To expand the bilingual campus in Charlottenburg with a sustainable annex. The goal is to create flexible learning spaces that support project-based learning and multicultural exchange.',
+    description: 'GOVERNMENT AIM: To expand the bilingual campus in Charlottenburg with a sustainable annex. The goal is to create flexible learning spaces.',
     status: 'Active',
-    location: 'Charlottenburg-Wilmersdorf, Berlin',
-    coordinates: { lat: 52.502, lng: 13.315 },
-    boundary: createPolygon(52.502, 13.315),
+    location: 'Pfalzburger Str., Berlin',
+    // Realistic coordinates for Nelson Mandela School
+    coordinates: { lat: 52.4816, lng: 13.3235 },
+    // Realistic building footprint shape (L-shapeish) - Much tighter to the coordinate
+    boundary: [
+        { lat: 52.4817, lng: 13.3234 },
+        { lat: 52.4817, lng: 13.3236 },
+        { lat: 52.4815, lng: 13.3236 },
+        { lat: 52.4815, lng: 13.3235 },
+        { lat: 52.4816, lng: 13.3235 },
+        { lat: 52.4816, lng: 13.3234 }
+    ] as any, // Cast for Google Maps typing compatibility if needed
     imageUrl: IMAGES.school1,
-    sitePlanUrl: IMAGES.plan,
+    sitePlanUrl: IMAGES.sketch1,
     progress: 75,
     type: 'School'
   },
   {
     id: '2',
-    title: 'Grundschule am Kollwitzplatz',
-    description: 'GOVERNMENT AIM: A complete redesign of the schoolyard in Prenzlauer Berg. The focus is on "Active Breaks" - integrating climbing structures, sensory gardens, and an open-air classroom.',
+    title: 'Kollwitzplatz Schoolyard',
+    description: 'GOVERNMENT AIM: A complete redesign of the schoolyard. The focus is on "Active Breaks" - integrating climbing structures.',
     status: 'Planning',
-    location: 'Prenzlauer Berg, Berlin',
-    coordinates: { lat: 52.536, lng: 13.418 },
-    boundary: createPolygon(52.536, 13.418),
+    location: 'Knaackstraße, Berlin',
+    coordinates: { lat: 52.5365, lng: 13.4170 },
+    boundary: createBox(52.5365, 13.4170, 0.00015) as any, // significantly smaller
     imageUrl: IMAGES.school3,
-    sitePlanUrl: IMAGES.plan,
+    sitePlanUrl: IMAGES.sketch2,
     progress: 30,
     type: 'School'
   },
   {
     id: '3',
-    title: 'Campus Rütli Integration Center',
-    description: 'GOVERNMENT AIM: Building a new community hub in Neukölln. Key requirements include a public library, vocational workshops for teenagers, and a safe, transparent facade.',
+    title: 'Campus Rütli Hub',
+    description: 'GOVERNMENT AIM: Building a new community hub in Neukölln with a public library and vocational workshops.',
     status: 'Review',
-    location: 'Neukölln, Berlin',
-    coordinates: { lat: 52.486, lng: 13.438 },
-    boundary: createPolygon(52.486, 13.438),
+    location: 'Rütli-Straße, Berlin',
+    coordinates: { lat: 52.4862, lng: 13.4385 },
+    boundary: createBox(52.4862, 13.4385, 0.0002) as any,
     imageUrl: IMAGES.school2,
-    sitePlanUrl: IMAGES.plan,
+    sitePlanUrl: IMAGES.sketch1,
     progress: 90,
     type: 'School'
   },
   {
     id: '4',
-    title: 'John F. Kennedy School Library',
-    description: 'GOVERNMENT AIM: Modernizing the learning resources center in Zehlendorf. The state aims to digitize the library while creating "Deep Work" pods.',
+    title: 'JFK School Library',
+    description: 'GOVERNMENT AIM: Modernizing the learning resources center in Zehlendorf.',
     status: 'Active',
-    location: 'Zehlendorf, Berlin',
-    coordinates: { lat: 52.429, lng: 13.262 },
-    boundary: createPolygon(52.429, 13.262),
+    location: 'Teltower Damm, Berlin',
+    coordinates: { lat: 52.4288, lng: 13.2625 },
+    boundary: createBox(52.4288, 13.2625, 0.0002) as any,
     imageUrl: IMAGES.school4,
-    sitePlanUrl: IMAGES.plan,
+    sitePlanUrl: IMAGES.sketch2,
     progress: 60,
     type: 'School'
   },
   {
     id: '5',
-    title: 'Europaschule Gymnasium',
-    description: 'GOVERNMENT AIM: Retrofitting the facade for energy efficiency and adding a rooftop solar garden for science classes.',
+    title: 'Europaschule Solar Roof',
+    description: 'GOVERNMENT AIM: Retrofitting the facade for energy efficiency and adding a rooftop solar garden.',
     status: 'Planning',
-    location: 'Lichtenberg, Berlin',
-    coordinates: { lat: 52.518, lng: 13.480 },
-    boundary: createPolygon(52.518, 13.480),
+    location: 'Schulstraße, Berlin',
+    coordinates: { lat: 52.5180, lng: 13.4800 },
+    boundary: createBox(52.5180, 13.4800, 0.00015) as any,
     imageUrl: IMAGES.school5,
-    sitePlanUrl: IMAGES.plan,
+    sitePlanUrl: IMAGES.sketch1,
     progress: 15,
     type: 'School'
   },
   {
     id: '6',
-    title: 'Sophie Scholl Gesamtschule',
-    description: 'GOVERNMENT AIM: Creating a safe bike shelter and entry plaza to encourage sustainable commuting among students.',
+    title: 'Sophie Scholl Plaza',
+    description: 'GOVERNMENT AIM: Creating a safe bike shelter and entry plaza to encourage sustainable commuting.',
     status: 'Active',
-    location: 'Schöneberg, Berlin',
-    coordinates: { lat: 52.490, lng: 13.355 },
-    boundary: createPolygon(52.490, 13.355),
+    location: 'Pallasstraße, Berlin',
+    coordinates: { lat: 52.4905, lng: 13.3555 },
+    boundary: createBox(52.4905, 13.3555, 0.0002) as any,
     imageUrl: IMAGES.school6,
-    sitePlanUrl: IMAGES.plan,
+    sitePlanUrl: IMAGES.sketch2,
     progress: 45,
     type: 'School'
   }

@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Project } from '../types';
-import { Search, Navigation } from 'lucide-react';
+import { Search, Navigation, Layers, Map as MapIcon, Loader2 } from 'lucide-react';
 import { searchLocations } from '../services/gemini';
-
-// Declare Leaflet globally since we loaded it via script tag
-declare const L: any;
 
 interface MapInterfaceProps {
   projects: Project[];
@@ -15,146 +12,158 @@ const MapInterface: React.FC<MapInterfaceProps> = ({ projects, onSelectProject }
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<{title: string, uri: string}[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [viewMode, setViewMode] = useState<'standard' | 'structural'>('standard');
+  const [mapLoaded, setMapLoaded] = useState(false);
   
-  const mapRef = useRef<any>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const layerGroupRef = useRef<any>(null);
 
+  // Initialize Leaflet Map
   useEffect(() => {
-    // Strict cleanup logic to handle React strict mode double-mounting and view switching
-    if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
+    if (!mapContainerRef.current) return;
+    
+    // Check if Leaflet is loaded from index.html
+    const L = (window as any).L;
+    if (!L) {
+        console.error("Leaflet not found");
+        return;
     }
 
-    if (mapContainerRef.current) {
-        // Initialize map centered on Berlin
-        const map = L.map(mapContainerRef.current).setView([52.5100, 13.4000], 12);
-        
-        // SATELLITE TILES for "Real" site feel (Esri World Imagery)
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-            maxZoom: 19
-        }).addTo(map);
-        
-        // Add label overlay so users know where they are
-        L.tileLayer('https://stamen-tiles-{s}.a.ssl.fastly.net/toner-labels/{z}/{x}/{y}{r}.{ext}', {
-            attribution: 'Map tiles by <a href="http://stamen.com">Stamen Design</a>',
-            subdomains: 'abcd',
-            minZoom: 0,
-            maxZoom: 20,
-            ext: 'png'
-        }).addTo(map);
+    if (mapInstanceRef.current) return; // Already initialized
 
-        mapRef.current = map;
-        
-        // Add markers and polygons
-        projects.forEach(project => {
-            // Draw the Construction Boundary
-            if (project.boundary) {
-                L.polygon(project.boundary, {
-                    color: project.status === 'Active' ? '#22c55e' : '#0ea5e9', // Green for active, Blue for planning
-                    fillColor: project.status === 'Active' ? '#22c55e' : '#0ea5e9',
-                    fillOpacity: 0.3,
-                    weight: 2,
-                    dashArray: '5, 10'
-                }).addTo(map);
-            }
+    const berlin = [52.4900, 13.3600];
+    
+    const map = L.map(mapContainerRef.current, {
+        center: berlin,
+        zoom: 12,
+        zoomControl: false,
+        attributionControl: false
+    });
 
-            const icon = L.divIcon({
-                className: 'custom-div-icon',
-                html: `<div style="background-color: ${project.status === 'Active' ? '#22c55e' : '#0ea5e9'}; width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`,
-                iconSize: [24, 24],
-                iconAnchor: [12, 12]
-            });
+    // Clean, architectural basemap (CartoDB Voyager)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+    }).addTo(map);
 
-            const marker = L.marker([project.coordinates.lat, project.coordinates.lng], { icon: icon }).addTo(map);
-            
-            // Custom popup
-            const popupContent = document.createElement('div');
-            popupContent.innerHTML = `
-                <div style="font-family: 'Inter', sans-serif; color: #0f172a; min-width: 160px;">
-                    <img src="${project.imageUrl}" style="width: 100%; height: 80px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;" />
-                    <h3 style="font-weight: bold; margin-bottom: 4px; font-size: 14px;">${project.title}</h3>
-                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                         <span style="font-size: 10px; background: #e2e8f0; padding: 2px 6px; border-radius: 10px;">${project.status}</span>
-                         <span style="font-size: 10px; margin-left: auto; color: #64748b;">${project.progress}% Funded</span>
-                    </div>
-                    <button id="btn-${project.id}" style="background-color: #0284c7; color: white; padding: 6px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; width: 100%;">View Project</button>
-                </div>
-            `;
-            
-            marker.bindPopup(popupContent);
-            
-            marker.on('popupopen', () => {
-                const btn = document.getElementById(`btn-${project.id}`);
-                if (btn) {
-                    btn.onclick = () => onSelectProject(project);
-                }
-            });
-        });
-    }
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+    mapInstanceRef.current = map;
+    layerGroupRef.current = L.layerGroup().addTo(map);
+    setMapLoaded(true);
+
+    // Cleanup
     return () => {
-        if (mapRef.current) {
-           mapRef.current.remove();
-           mapRef.current = null;
+        if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
         }
     };
-  }, [projects, onSelectProject]);
+  }, []);
+
+  // Update Markers & Polygons
+  useEffect(() => {
+    if (!mapInstanceRef.current || !layerGroupRef.current) return;
+    const L = (window as any).L;
+    
+    layerGroupRef.current.clearLayers();
+
+    projects.forEach(project => {
+        const color = viewMode === 'structural' ? '#2563eb' : (project.status === 'Active' ? '#22c55e' : '#0ea5e9');
+        
+        // Convert boundary objects {lat, lng} to arrays [lat, lng]
+        const latLngs = (project.boundary as any[]).map(p => [p.lat, p.lng]);
+
+        // Polygon
+        const polygon = L.polygon(latLngs, {
+            color: color,
+            fillColor: color,
+            fillOpacity: viewMode === 'structural' ? 0.1 : 0.4,
+            weight: 2
+        }).addTo(layerGroupRef.current);
+
+        polygon.on('click', () => onSelectProject(project));
+
+        // Marker (Custom Div Icon to look like the circles)
+        const icon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="background-color: ${color};" class="custom-marker-pin"></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+
+        const marker = L.marker([project.coordinates.lat, project.coordinates.lng], { icon: icon })
+            .addTo(layerGroupRef.current);
+
+        // Popup
+        const popupContent = `
+            <div style="font-family: 'Inter', sans-serif; padding: 12px; min-width: 200px;">
+                <h3 style="font-weight: 700; margin-bottom: 4px; font-size: 14px;">${project.title}</h3>
+                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 12px;">${project.status}</p>
+                <button id="btn-${project.id}" style="width: 100%; background: #0f172a; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">
+                    Open Studio
+                </button>
+            </div>
+        `;
+
+        marker.bindPopup(popupContent, {
+            className: 'custom-popup',
+            closeButton: true,
+            offset: [0, -10]
+        });
+
+        marker.on('popupopen', () => {
+            setTimeout(() => {
+                const btn = document.getElementById(`btn-${project.id}`);
+                if (btn) btn.onclick = () => onSelectProject(project);
+            }, 50);
+        });
+    });
+
+  }, [projects, viewMode, mapLoaded, onSelectProject]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
-
+    
     setIsSearching(true);
     try {
-        let loc = undefined;
-        try {
-            const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject);
-            });
-            loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            if (mapRef.current) {
-                mapRef.current.setView([loc.lat, loc.lng], 14);
-            }
-        } catch (e) {
-            console.warn("Location denied");
-        }
-
-        const results = await searchLocations(searchQuery, loc);
+        const results = await searchLocations(searchQuery);
         setSearchResults(results);
-    } catch (err) {
-        console.error("Search failed", err);
+    } catch (e) {
+        console.error("Search failed", e);
     } finally {
         setIsSearching(false);
     }
   };
 
   return (
-    <div className="relative w-full h-full bg-[#0B1120] overflow-hidden">
+    <div className="relative w-full h-full bg-slate-50 overflow-hidden">
       
       {/* Search Bar */}
       <div className="absolute top-4 left-4 right-4 z-[400] max-w-md mx-auto">
-        <form onSubmit={handleSearch} className="relative shadow-2xl">
+        <form onSubmit={handleSearch} className="relative shadow-xl">
             <input 
                 type="text" 
-                placeholder="Search for Berlin schools..." 
-                className="w-full bg-slate-900/90 backdrop-blur-md text-white border border-slate-600 rounded-full py-3 px-12 focus:ring-2 focus:ring-sky-500 outline-none"
+                placeholder="Search Berlin..." 
+                className="w-full bg-white text-slate-800 border-2 border-slate-200 rounded-full py-3 px-12 focus:ring-4 focus:ring-sky-500/20 outline-none font-medium shadow-sm"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
             />
             <Search className="absolute left-4 top-3.5 text-slate-400 w-5 h-5" />
-            <button type="submit" className="absolute right-2 top-2 bg-sky-600 p-1.5 rounded-full hover:bg-sky-500 transition">
+            <button type="submit" className="absolute right-2 top-2 bg-slate-900 p-1.5 rounded-full hover:bg-slate-700 transition">
                 {isSearching ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Navigation className="w-4 h-4 text-white" />}
             </button>
         </form>
 
-        {/* Search Results Dropdown */}
+        {/* Search Results */}
         {searchResults.length > 0 && (
-            <div className="mt-2 bg-slate-900 rounded-xl shadow-xl overflow-hidden border border-slate-700">
-                <div className="p-2 text-xs text-slate-400 font-bold uppercase tracking-wider">Grounding Results</div>
+            <div className="mt-2 bg-white rounded-xl shadow-xl overflow-hidden border border-slate-100 relative z-[500]">
+                <div className="p-2 text-xs text-slate-400 font-bold uppercase tracking-wider bg-slate-50">Results</div>
                 {searchResults.map((res, i) => (
-                    <a key={i} href={res.uri} target="_blank" rel="noopener noreferrer" className="block px-4 py-3 hover:bg-slate-800 text-sm text-sky-300 border-b border-slate-700/50 last:border-0 truncate">
+                    <a key={i} href={res.uri} target="_blank" rel="noopener noreferrer" className="block px-4 py-3 hover:bg-slate-50 text-sm text-sky-600 border-b border-slate-100 last:border-0 truncate font-medium">
                         {res.title}
                     </a>
                 ))}
@@ -162,13 +171,38 @@ const MapInterface: React.FC<MapInterfaceProps> = ({ projects, onSelectProject }
         )}
       </div>
 
+      {/* View Toggle */}
+      <div className="absolute top-20 right-4 z-[400] flex flex-col gap-2">
+           <button 
+             onClick={() => setViewMode(viewMode === 'standard' ? 'structural' : 'standard')}
+             className={`p-3 rounded-full shadow-lg border-2 transition-all duration-300 ${viewMode === 'structural' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+             title="Toggle Structural View"
+           >
+               <Layers className="w-6 h-6" />
+           </button>
+      </div>
+
       {/* Map Container */}
-      <div ref={mapContainerRef} id="map-container" className="absolute inset-0 z-0 h-full w-full outline-none bg-slate-900"></div>
+      <div ref={mapContainerRef} id="map-container" className="absolute inset-0 z-0 h-full w-full outline-none bg-slate-100">
+          {!mapLoaded && (
+              <div className="flex items-center justify-center h-full bg-slate-100">
+                  <Loader2 className="w-10 h-10 animate-spin text-slate-400" />
+                  <span className="ml-2 text-slate-500">Loading Map...</span>
+              </div>
+          )}
+      </div>
 
       {/* Legend */}
-      <div className="absolute bottom-6 left-6 z-[400] bg-slate-900/90 backdrop-blur p-4 rounded-xl border border-slate-700 text-xs text-slate-300 shadow-xl">
-          <div className="flex items-center mb-2"><span className="w-8 h-8 rounded bg-green-500/30 border border-green-500 mr-2 border-dashed"></span> Active Area</div>
-          <div className="flex items-center"><span className="w-8 h-8 rounded bg-sky-500/30 border border-sky-500 mr-2 border-dashed"></span> Planned Area</div>
+      <div className="absolute bottom-6 left-6 z-[400] bg-white/90 backdrop-blur p-4 rounded-xl border border-slate-200 text-xs text-slate-600 shadow-xl">
+          <h4 className="font-bold mb-2 uppercase tracking-wider text-slate-400 text-[10px]">{viewMode === 'structural' ? 'Engineering Layer' : 'Planning Zones'}</h4>
+          {viewMode === 'structural' ? (
+              <div className="flex items-center"><span className="w-6 h-6 border-2 border-blue-600 border-dashed bg-blue-600/20 mr-2"></span> Surveyed Area</div>
+          ) : (
+             <>
+                <div className="flex items-center mb-2"><span className="w-4 h-4 rounded-full bg-green-500 mr-2 border-2 border-white shadow-sm"></span> Active Projects</div>
+                <div className="flex items-center"><span className="w-4 h-4 rounded-full bg-sky-500 mr-2 border-2 border-white shadow-sm"></span> Proposed</div>
+             </>
+          )}
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Project, Idea } from '../types';
 import { generateArchitecturalImage, generateArchitecturalVideo } from '../services/gemini';
 import { getIdeas, saveIdea, voteIdea, getVoteCount } from '../services/storage';
-import { MessageSquare, ThumbsUp, Video, Image as ImageIcon, Loader2, Sparkles, Send, Mic, Edit, Wand2, Plus, Check, Play, Map as MapIcon, Globe, Layers, AlertCircle } from 'lucide-react';
-import LiveAssistant from './LiveAssistant';
+import { DESIGN_PRESETS } from '../constants';
+import { MessageSquare, ThumbsUp, Video, Image as ImageIcon, Loader2, Sparkles, Send, Mic, Edit, Wand2, Plus, Check, Play, Map as MapIcon, Globe, Layers, AlertCircle, Eye, PenTool, Palette } from 'lucide-react';
+import BeaverAgent from './BeaverAgent';
 
 interface ProjectDetailProps {
   project: Project;
@@ -13,81 +14,116 @@ interface ProjectDetailProps {
 
 const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoints }) => {
   const [ideas, setIdeas] = useState<Idea[]>([]);
-  const [manualPrompt, setManualPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'ideate' | 'site' | 'gallery'>('ideate');
-  const [isLiveActive, setIsLiveActive] = useState(false);
+  const [isBeaverActive, setIsBeaverActive] = useState(false);
+  const [mapError, setMapError] = useState('');
   
-  // Toggle for context consistency
-  const [useSiteContext, setUseSiteContext] = useState(true);
+  // Design Input State
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
 
-  // Wizard State
-  const [wizardTheme, setWizardTheme] = useState('');
-  const [wizardFeatures, setWizardFeatures] = useState<string[]>([]);
+  // Leaflet Refs
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
 
   useEffect(() => {
-      // Load ideas from storage on mount
       const loadedIdeas = getIdeas(project.id);
-      
-      // Calculate display votes (base + local session votes)
       const ideasWithVotes = loadedIdeas.map(idea => ({
           ...idea,
           votes: getVoteCount(idea.id, idea.votes)
       }));
-      
       setIdeas(ideasWithVotes);
   }, [project.id]);
 
-  const themes = [
-    { id: 'modern', label: 'Modern & Glass', desc: 'Sleek, transparent, bright' },
-    { id: 'eco', label: 'Green & Eco', desc: 'Wooden, vertical gardens, nature' },
-    { id: 'colorful', label: 'Playful & Colorful', desc: 'Vibrant, geometric, fun' },
-    { id: 'brick', label: 'Berlin Brick', desc: 'Historic, sturdy, urban' },
-  ];
+  // Init Map when tab changes
+  useEffect(() => {
+      if (activeTab === 'site' && mapContainerRef.current && !mapInstanceRef.current) {
+          const L = (window as any).L;
+          if (!L) {
+              setMapError("Map library not found");
+              return;
+          }
 
-  const features = [
-    'Climbing Wall', 'School Garden', 'Sensory Path', 'Outdoor Classroom', 'Solar Roof', 'Skate Park', 'Amphitheater', 'Relaxation Pods'
-  ];
+          try {
+              const map = L.map(mapContainerRef.current, {
+                  center: [project.coordinates.lat, project.coordinates.lng],
+                  zoom: 19,
+                  zoomControl: true,
+              });
 
-  const toggleFeature = (feat: string) => {
-    setWizardFeatures(prev => prev.includes(feat) ? prev.filter(f => f !== feat) : [...prev, feat]);
-  };
+              // Esri World Imagery (Satellite)
+              L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                  attribution: 'Tiles &copy; Esri'
+              }).addTo(map);
+
+              // Boundary
+              const latLngs = (project.boundary as any[]).map(p => [p.lat, p.lng]);
+              L.polygon(latLngs, {
+                  color: '#22c55e',
+                  weight: 3,
+                  fillColor: '#22c55e',
+                  fillOpacity: 0.1
+              }).addTo(map);
+
+              // Marker
+              const icon = L.divIcon({
+                  className: 'custom-site-marker',
+                  html: '<div style="background-color: #22c55e; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>',
+                  iconSize: [16, 16]
+              });
+              L.marker([project.coordinates.lat, project.coordinates.lng], { icon }).addTo(map);
+
+              mapInstanceRef.current = map;
+          } catch (e) {
+              console.error("Map init error:", e);
+              setMapError("Could not initialize view.");
+          }
+      }
+
+      return () => {
+          if (activeTab !== 'site' && mapInstanceRef.current) {
+              mapInstanceRef.current.remove();
+              mapInstanceRef.current = null;
+          }
+      };
+  }, [activeTab, project]);
 
   const handleVote = (ideaId: string) => {
       const newCount = voteIdea(ideaId);
       setIdeas(prev => prev.map(i => i.id === ideaId ? { ...i, votes: getVoteCount(ideaId, i.votes), isLiked: true } : i));
   };
 
-  const constructFullPrompt = () => {
-    const parts = [];
-    if (wizardTheme) parts.push(`Style: ${wizardTheme}`);
-    if (wizardFeatures.length > 0) parts.push(`Features: ${wizardFeatures.join(', ')}`);
-    if (manualPrompt) parts.push(`Details: ${manualPrompt}`);
-    
-    // Strict prompt engineering for site consistency
-    let contextPrompt = "";
-    if (useSiteContext) {
-        contextPrompt = `CRITICAL: The design MUST be situated at coordinates ${project.coordinates.lat}, ${project.coordinates.lng} in ${project.location}. The architecture must respect the existing boundary and urban fabric of this specific Berlin neighborhood. Preserve existing mature trees where possible. Viewpoint should be realistic street level or drone shot matching the real site.`;
-    }
-    
-    return `Architectural visualization of ${project.title}. ${contextPrompt} ${project.description}. Design specifics: ${parts.join('. ')}. Photorealistic, 8k render, architectural visualization style, cinematic lighting.`;
+  const handleBeaverIdea = async (promptFromBeaver: string) => {
+    setIsBeaverActive(false);
+    setCustomPrompt(promptFromBeaver); // Fill input with beaver's idea
   };
 
-  const handleGenerateImage = async () => {
-    const finalPrompt = constructFullPrompt();
-    if (!manualPrompt && !wizardTheme && wizardFeatures.length === 0) {
-        alert("Please select a style, feature, or describe your idea.");
-        return;
-    }
-
-    setIsGenerating(true);
-    setLoadingMessage("Analyzing real-world site context & rendering vision...");
-    try {
-      // In a real production app, we would fetch the project.imageUrl here and pass it as base64
-      // to the model to ensure the generated image perfectly overlays the original.
-      // For this demo, we rely on the strong "CRITICAL" text prompt instructions regarding location.
+  const handleGenerateClick = async () => {
+      if (!customPrompt && !selectedPreset) {
+          alert("Please describe your idea or select a style!");
+          return;
+      }
       
+      const presetPrompt = selectedPreset ? DESIGN_PRESETS.find(p => p.id === selectedPreset)?.prompt : '';
+      
+      const complexPrompt = `
+        High-quality architectural visualization, highly detailed, photorealistic render.
+        Subject: ${project.title} located at ${project.location}.
+        Design Specs: ${customPrompt}.
+        Style Modifier: ${presetPrompt}.
+        Requirements: Realistic architectural drawing, 8k resolution, cinematic lighting, precise perspective matching a real construction site boundary.
+      `;
+      
+      await executeGeneration(complexPrompt, customPrompt); // Pass original prompt for display
+  };
+
+  const executeGeneration = async (finalPrompt: string, displayPrompt: string) => {
+    setIsGenerating(true);
+    setLoadingMessage("Architecting your vision...");
+    try {
+      // Uses gemini-3-pro-image-preview internally in services/gemini.ts
       const resultUrl = await generateArchitecturalImage(finalPrompt);
       addPoints(50);
 
@@ -95,7 +131,7 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
         id: Date.now().toString(),
         projectId: project.id,
         author: 'You',
-        prompt: finalPrompt,
+        prompt: displayPrompt || "Custom Design",
         imageUrl: resultUrl,
         votes: 0,
         comments: [],
@@ -106,9 +142,9 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
       saveIdea(newIdea);
       setIdeas([newIdea, ...ideas]);
       setActiveTab('gallery');
+      setCustomPrompt('');
+      setSelectedPreset(null);
       
-      setManualPrompt('');
-      setWizardFeatures([]);
     } catch (error) {
       console.error("Generation failed:", error);
       alert("Failed to generate content. Please try again.");
@@ -119,15 +155,12 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
 
   const handleGenerateTour = async (idea: Idea) => {
       if (!idea.imageUrl) return;
-      
       setIsGenerating(true);
       setLoadingMessage("Constructing 3D Fly-through Tour... (This may take a minute)");
-      
       try {
           const videoPrompt = "Cinematic 3D drone tour fly-through of this architectural design, smooth motion, high definition, real world physics.";
           const videoUrl = await generateArchitecturalVideo(videoPrompt, idea.imageUrl.split(',')[1]);
           addPoints(100);
-
           const newVideoIdea: Idea = {
               id: Date.now().toString(),
               projectId: project.id,
@@ -139,7 +172,6 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
               createdAt: new Date().toISOString(),
               type: 'video'
           };
-          
           saveIdea(newVideoIdea);
           setIdeas([newVideoIdea, ...ideas]);
       } catch (error) {
@@ -161,18 +193,8 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
           <h2 className="text-xl font-bold text-sky-400">{project.title}</h2>
           <p className="text-xs text-slate-400 flex items-center">
               <MapIcon className="w-3 h-3 mr-1" />
-              {project.location} ({project.coordinates.lat.toFixed(4)}, {project.coordinates.lng.toFixed(4)})
+              {project.location}
           </p>
-        </div>
-        {/* Progress Bar */}
-        <div className="hidden md:block w-48 mr-4">
-             <div className="flex justify-between text-xs text-slate-300 mb-1">
-                 <span>Project Status</span>
-                 <span>{project.progress}%</span>
-             </div>
-             <div className="w-full bg-slate-700 rounded-full h-2">
-                 <div className="bg-gradient-to-r from-sky-500 to-green-400 h-2 rounded-full transition-all duration-1000" style={{ width: `${project.progress}%` }}></div>
-             </div>
         </div>
       </div>
 
@@ -191,158 +213,142 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
                 className={`pb-2 px-4 flex items-center ${activeTab === 'site' ? 'border-b-2 border-sky-500 text-sky-400' : 'text-slate-400 hover:text-white'}`}
             >
                 <Globe className="w-4 h-4 mr-2" />
-                Real 3D Site
+                Site View (Satellite)
             </button>
             <button 
                 onClick={() => setActiveTab('gallery')}
                 className={`pb-2 px-4 flex items-center ${activeTab === 'gallery' ? 'border-b-2 border-sky-500 text-sky-400' : 'text-slate-400 hover:text-white'}`}
             >
                 <Layers className="w-4 h-4 mr-2" />
-                Proposals ({ideas.length})
+                Gallery
             </button>
         </div>
 
         {activeTab === 'site' && (
-            <div className="space-y-6 h-[60vh]">
-                 <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 h-full flex flex-col">
-                     <h3 className="text-sm font-bold text-slate-300 mb-2 flex items-center">
-                         <Globe className="w-4 h-4 mr-2 text-sky-500" />
-                         Satellite Site Context
-                     </h3>
-                     <div className="flex-1 rounded-lg overflow-hidden border border-slate-600 relative bg-black">
-                         {/* Embed Google Maps Satellite View */}
-                         <iframe 
-                             width="100%" 
-                             height="100%" 
-                             style={{border:0}} 
-                             loading="lazy" 
-                             allowFullScreen 
-                             src={`https://maps.google.com/maps?q=${project.coordinates.lat},${project.coordinates.lng}&t=k&z=19&ie=UTF8&iwloc=&output=embed`}
-                         ></iframe>
-                         
-                         <div className="absolute bottom-4 left-4 bg-black/70 p-3 rounded-lg border border-slate-500 max-w-xs backdrop-blur-sm">
-                             <p className="text-xs text-white">
-                                <span className="font-bold text-sky-400">Boundary Constraint:</span> All designs must fit within the visible construction lot. The AI generation engine uses this coordinate data to align the perspective.
-                             </p>
-                         </div>
+            <div className="space-y-6 h-[70vh]">
+                 <div className="bg-slate-800 p-1 rounded-xl border border-slate-700 h-full flex flex-col shadow-2xl overflow-hidden relative group">
+                     {/* Leaflet Container */}
+                     <div ref={mapContainerRef} className="w-full h-full bg-slate-900 relative">
+                         {mapError && (
+                             <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 z-20">
+                                 <div className="text-red-400 flex items-center">
+                                     <AlertCircle className="w-5 h-5 mr-2" />
+                                     {mapError}
+                                 </div>
+                             </div>
+                         )}
+                     </div>
+                     
+                     <div className="absolute top-4 left-4 bg-black/80 backdrop-blur text-white px-4 py-2 rounded-lg font-bold flex items-center border border-white/20 z-[500]">
+                        <Globe className="w-4 h-4 mr-2 text-sky-400" />
+                        Live Satellite Feed
                      </div>
                  </div>
             </div>
         )}
 
         {activeTab === 'ideate' && (
-            <div className="space-y-6 max-w-5xl mx-auto">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Left Column: Context & Site Plan */}
-                    <div className="lg:col-span-1 space-y-4">
-                         <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
-                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Government Site Plan</h4>
-                             <img src={project.sitePlanUrl} alt="Plan" className="w-full h-40 object-cover rounded-lg border border-slate-600 opacity-80 hover:opacity-100 transition-opacity" />
-                             <p className="mt-2 text-xs text-slate-400">{project.description}</p>
-                         </div>
-                         
-                         <div className="bg-indigo-900/30 p-4 rounded-xl border border-indigo-500/30">
-                             <div className="flex items-center justify-between mb-2">
-                                 <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Site Consistency</h4>
-                                 <input 
-                                    type="checkbox" 
-                                    checked={useSiteContext} 
-                                    onChange={(e) => setUseSiteContext(e.target.checked)}
-                                    className="w-4 h-4 rounded border-slate-600 text-indigo-500 focus:ring-indigo-500 bg-slate-700"
-                                 />
-                             </div>
-                             <p className="text-xs text-slate-400 mb-2">
-                                 Enforce "Real Site" constraints. AI will use coordinates {project.coordinates.lat.toFixed(3)}, {project.coordinates.lng.toFixed(3)} to match lighting and surroundings.
-                             </p>
-                             {useSiteContext && (
-                                 <div className="flex items-center text-[10px] text-green-400 bg-green-900/20 p-1.5 rounded border border-green-900/50">
-                                     <Check className="w-3 h-3 mr-1" />
-                                     Context Locked
-                                 </div>
-                             )}
-                         </div>
+            <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* Left: Design Controls */}
+                <div className="lg:col-span-8 space-y-6">
+                    {/* Design Input Area */}
+                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+                            <PenTool className="w-32 h-32 text-white" />
+                        </div>
+                        
+                        <h3 className="text-lg font-bold text-white mb-4 flex items-center">
+                            <Sparkles className="w-5 h-5 mr-2 text-yellow-400" />
+                            Create New Design
+                        </h3>
+
+                        <textarea 
+                            value={customPrompt}
+                            onChange={(e) => setCustomPrompt(e.target.value)}
+                            placeholder="Describe your vision... (e.g., 'A modern library with glass walls and a rooftop garden')"
+                            className="w-full bg-slate-900/50 border border-slate-600 rounded-xl p-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-sky-500 focus:border-transparent outline-none h-32 resize-none transition-all"
+                        />
+
+                        {/* Presets */}
+                        <div className="mt-4">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block flex items-center">
+                                <Palette className="w-3 h-3 mr-1" /> Style Presets
+                            </label>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {DESIGN_PRESETS.map((preset) => (
+                                    <button
+                                        key={preset.id}
+                                        onClick={() => setSelectedPreset(selectedPreset === preset.id ? null : preset.id)}
+                                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all border ${
+                                            selectedPreset === preset.id 
+                                            ? 'bg-sky-600 border-sky-500 text-white shadow-[0_0_15px_rgba(14,165,233,0.4)]' 
+                                            : 'bg-slate-700/50 border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white'
+                                        }`}
+                                    >
+                                        {preset.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex justify-between items-center">
+                             <button 
+                                onClick={() => setIsBeaverActive(true)}
+                                className="text-amber-400 hover:text-amber-300 text-sm font-medium flex items-center transition-colors"
+                             >
+                                <Mic className="w-4 h-4 mr-1" /> Ask Benny for ideas
+                             </button>
+
+                             <button 
+                                onClick={handleGenerateClick}
+                                disabled={isGenerating}
+                                className={`bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white px-8 py-3 rounded-full font-bold shadow-lg transform transition-all hover:scale-105 flex items-center ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                             >
+                                {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5 mr-2" />}
+                                {isGenerating ? 'Rendering...' : 'Generate Design'}
+                             </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Right: Benny & Context */}
+                <div className="lg:col-span-4 space-y-6">
+                    {/* Benny The Beaver Agent */}
+                    <div className="bg-gradient-to-br from-amber-500/10 to-orange-600/10 border border-amber-500/20 p-6 rounded-2xl flex flex-col items-center justify-center text-center relative group">
+                        <div className="absolute inset-0 bg-amber-500/5 blur-3xl rounded-full group-hover:bg-amber-500/10 transition-all"></div>
+                        <div 
+                            className="w-24 h-24 bg-amber-100 rounded-full flex items-center justify-center text-6xl shadow-xl border-4 border-amber-400 cursor-pointer transform group-hover:scale-110 transition-transform mb-4 z-10"
+                            onClick={() => setIsBeaverActive(true)}
+                        >
+                            🦫
+                        </div>
+                        <h3 className="text-amber-400 font-bold mb-1">Benny the Builder</h3>
+                        <p className="text-xs text-slate-400 mb-4">"I can help brainstorm ideas! Click me to chat."</p>
+                        <button 
+                            onClick={() => setIsBeaverActive(true)}
+                            className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-4 rounded-full shadow-lg transition-colors z-10"
+                        >
+                            Open Voice Chat
+                        </button>
                     </div>
 
-                    {/* Right Column: Creation Wizard */}
-                    <div className="lg:col-span-2 bg-slate-800 p-6 rounded-2xl shadow-xl border border-slate-700 relative">
-                        {isGenerating && (
-                            <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-2xl p-8 text-center">
-                                <Loader2 className="w-12 h-12 text-sky-500 animate-spin mb-4" />
-                                <p className="text-sky-300 font-medium text-lg animate-pulse mb-2">{loadingMessage}</p>
-                                <p className="text-slate-500 text-sm">Aligning geometry with site boundary...</p>
-                            </div>
-                        )}
-
-                        <div className="flex items-center mb-6 text-sky-400">
-                            <Sparkles className="w-5 h-5 mr-2" />
-                            <h3 className="text-lg font-bold">Create New Proposal</h3>
-                        </div>
-
-                        <div className="space-y-6">
-                            {/* Step 1: Theme */}
-                            <div>
-                                <h4 className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-3">1. Choose Aesthetic</h4>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    {themes.map(t => (
-                                        <button 
-                                            key={t.id}
-                                            onClick={() => setWizardTheme(t.label)}
-                                            className={`p-3 rounded-lg border text-left transition-all ${wizardTheme === t.label ? 'bg-sky-600 border-sky-500 text-white shadow-lg shadow-sky-900' : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'}`}
-                                        >
-                                            <div className="font-semibold text-sm">{t.label}</div>
-                                            <div className="text-[10px] opacity-70 truncate">{t.desc}</div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Step 2: Features */}
-                            <div>
-                                <h4 className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-3">2. Add Community Features</h4>
-                                <div className="flex flex-wrap gap-2">
-                                    {features.map(f => (
-                                        <button
-                                            key={f}
-                                            onClick={() => toggleFeature(f)}
-                                            className={`px-3 py-1.5 rounded-full text-sm border flex items-center transition-all ${wizardFeatures.includes(f) ? 'bg-green-600/20 border-green-500 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'}`}
-                                        >
-                                            {wizardFeatures.includes(f) ? <Check className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
-                                            {f}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Step 3: Manual Detail */}
-                            <div>
-                                <h4 className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-3">3. Specific Details</h4>
-                                <textarea 
-                                    className="w-full bg-slate-900 border border-slate-600 rounded-xl p-4 text-white focus:ring-2 focus:ring-sky-500 outline-none resize-none h-24 text-sm placeholder-slate-600"
-                                    placeholder="Describe specific materials, lighting, or unique structural elements..."
-                                    value={manualPrompt}
-                                    onChange={(e) => setManualPrompt(e.target.value)}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row justify-between items-center mt-6 pt-6 border-t border-slate-700 gap-4">
-                            <button 
-                                onClick={() => setIsLiveActive(true)}
-                                className="text-sky-400 hover:text-sky-300 flex items-center text-sm font-medium bg-sky-900/20 px-4 py-2 rounded-full border border-sky-900/50"
-                            >
-                                <Mic className="w-4 h-4 mr-2" />
-                                Use Voice Assistant
-                            </button>
-
-                            <button 
-                                onClick={handleGenerateImage}
-                                disabled={isGenerating}
-                                className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold flex items-center justify-center transition-all ${isGenerating ? 'bg-slate-600 text-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white shadow-lg shadow-sky-500/20'}`}
-                            >
-                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ImageIcon className="w-4 h-4 mr-2" />}
-                                Generate Proposal
-                            </button>
-                        </div>
+                    {/* Project Mini Specs */}
+                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                         <h4 className="text-xs font-bold text-slate-400 mb-3 uppercase tracking-wider">Site Context</h4>
+                         <div className="space-y-3">
+                             <div className="flex justify-between items-center text-sm border-b border-slate-700 pb-2">
+                                 <span className="text-slate-500">Zone</span>
+                                 <span className="text-white font-medium">Educational</span>
+                             </div>
+                             <div className="flex justify-between items-center text-sm border-b border-slate-700 pb-2">
+                                 <span className="text-slate-500">Max Height</span>
+                                 <span className="text-white font-medium">22m</span>
+                             </div>
+                             <div className="text-xs text-slate-500 italic mt-2">
+                                "Please respect the marked structural boundaries. Focus on sustainable materials."
+                             </div>
+                         </div>
                     </div>
                 </div>
             </div>
@@ -350,25 +356,15 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
 
         {activeTab === 'gallery' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {ideas.length === 0 && (
-                    <div className="col-span-full text-center py-20 text-slate-500 bg-slate-800/50 rounded-2xl border border-slate-700 border-dashed">
-                        <ImageIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                        <p className="text-lg font-medium">No proposals yet.</p>
-                        <p className="text-sm">Be the first to design the future of this site!</p>
-                        <button onClick={() => setActiveTab('ideate')} className="mt-4 text-sky-400 hover:underline">Go to Design Studio</button>
-                    </div>
-                )}
                 {ideas.map((idea) => (
-                    <div key={idea.id} className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-md hover:shadow-sky-500/20 transition-all duration-300 flex flex-col group">
-                        <div className="relative aspect-video bg-black">
+                    <div key={idea.id} className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-md">
+                        <div className="relative aspect-video bg-black group">
                             {idea.type === 'image' ? (
                                 <img src={idea.imageUrl} alt={idea.prompt} className="w-full h-full object-cover" />
                             ) : (
                                 <video src={idea.videoUrl} controls autoPlay loop muted className="w-full h-full object-cover" />
                             )}
-                            
-                            {/* Overlay for Image -> Video Action */}
-                            {idea.type === 'image' && (
+                             {idea.type === 'image' && (
                                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
                                     <button 
                                         onClick={() => handleGenerateTour(idea)}
@@ -376,36 +372,18 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
                                         className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2.5 rounded-full font-bold flex items-center shadow-lg transform hover:scale-105 transition-all text-sm"
                                     >
                                         <Video className="w-4 h-4 mr-2" />
-                                        Generate 3D Tour
+                                        3D Tour
                                     </button>
-                                </div>
-                            )}
-                            
-                            {idea.type === 'video' && (
-                                <div className="absolute top-2 right-2 bg-purple-600 text-xs font-bold px-2 py-1 rounded text-white shadow flex items-center">
-                                    <Video className="w-3 h-3 mr-1" /> 3D TOUR
                                 </div>
                             )}
                         </div>
-                        
-                        <div className="p-4 flex flex-col flex-1">
-                            <p className="text-slate-300 text-xs mb-3 line-clamp-3 italic leading-relaxed">"{idea.prompt}"</p>
-                            <div className="mt-auto flex justify-between items-center text-xs text-slate-400 border-t border-slate-700 pt-3">
-                                <span className="flex items-center space-x-1">
-                                    <div className="w-5 h-5 rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 flex items-center justify-center text-[8px] text-white font-bold">
-                                        {idea.author[0]}
-                                    </div>
-                                    <span className="font-semibold text-slate-200">{idea.author}</span>
-                                </span>
-                                <div className="flex items-center space-x-3">
-                                    <button 
-                                        onClick={() => handleVote(idea.id)}
-                                        className={`flex items-center transition-colors px-2 py-1 rounded-full ${idea.isLiked ? 'bg-sky-500/20 text-sky-400' : 'hover:bg-slate-700 hover:text-sky-400'}`}
-                                    >
-                                        <ThumbsUp className={`w-3.5 h-3.5 mr-1.5 ${idea.isLiked ? 'fill-current' : ''}`} />
-                                        {idea.votes}
-                                    </button>
-                                </div>
+                        <div className="p-4">
+                            <div className="flex justify-between items-center text-xs text-slate-400">
+                                <span className="truncate max-w-[150px]">{idea.prompt}</span>
+                                <button onClick={() => handleVote(idea.id)} className="flex items-center hover:text-sky-400 group">
+                                    <ThumbsUp className={`w-3 h-3 mr-1 ${idea.isLiked ? 'text-sky-500 fill-sky-500' : ''} group-hover:scale-125 transition-transform`} /> 
+                                    {idea.votes}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -414,12 +392,13 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, onBack, addPoint
         )}
       </div>
 
-      {/* Live Assistant Modal */}
-      {isLiveActive && (
-          <LiveAssistant onClose={() => setIsLiveActive(false)} onIdeaCapture={(text) => {
-              setManualPrompt(text);
-              setIsLiveActive(false);
-          }} />
+      {/* Benny Modal */}
+      {isBeaverActive && (
+          <BeaverAgent 
+            projectTitle={project.title} 
+            onClose={() => setIsBeaverActive(false)} 
+            onIdeaReady={handleBeaverIdea} 
+          />
       )}
     </div>
   );
